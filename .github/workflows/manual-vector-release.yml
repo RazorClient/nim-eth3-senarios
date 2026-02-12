@@ -1,0 +1,151 @@
+name: Manual vector release
+
+on:
+  workflow_dispatch:
+    inputs:
+      lean_spec_ref:
+        description: "leanSpec ref (branch, tag, or SHA)"
+        required: true
+        default: main
+      release_version:
+        description: "Release version tag (vX.Y.Z)"
+        required: true
+      update_main_submodule:
+        description: "Commit selected leanSpec submodule ref to main branch"
+        required: false
+        default: false
+        type: boolean
+      fork:
+        description: "Fork argument for fill command"
+        required: false
+        default: Devnet
+      scheme:
+        description: "Optional scheme argument for fill command (e.g. prod)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vector-release
+  cancel-in-progress: false
+
+jobs:
+  release-vectors:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Ensure submodule is initialized
+        run: git submodule update --init --recursive vendor/leanspec
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            vendor/leanspec/pyproject.toml
+            vendor/leanspec/uv.lock
+          python-version: "3.12"
+
+      - name: Validate release version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ github.event.inputs.release_version }}"
+          if ! [[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version '${VERSION}'. Use vX.Y.Z format."
+            exit 1
+          fi
+          if gh release view "${VERSION}" >/dev/null 2>&1; then
+            echo "Release '${VERSION}' already exists."
+            exit 1
+          fi
+
+      - name: Update leanSpec submodule
+        run: |
+          scripts/eth3/update_leanspec_submodule.sh \
+            --ref "${{ github.event.inputs.lean_spec_ref }}" \
+            --env-file .tmp/leanspec.env
+
+      - name: Commit submodule bump to main
+        if: github.event.inputs.update_main_submodule == 'true'
+        run: |
+          set -euo pipefail
+          source .tmp/leanspec.env
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add vendor/leanspec
+          if git diff --cached --quiet; then
+            echo "No submodule change to commit."
+            exit 0
+          fi
+          git commit -m "chore(leanspec): pin ${LEANSPEC_SHORT_SHA}"
+          git push origin "${GITHUB_REF_NAME}"
+
+      - name: Generate vectors
+        run: |
+          set -euo pipefail
+          ARGS=(
+            scripts/eth3/generate_lean_spec_vectors.sh
+            --repo-dir vendor/leanspec
+            --out-dir lean-spec-vectors
+            --fork "${{ github.event.inputs.fork }}"
+            --python-version 3.12
+          )
+          if [ -n "${{ github.event.inputs.scheme }}" ]; then
+            ARGS+=(--scheme "${{ github.event.inputs.scheme }}")
+          fi
+          "${ARGS[@]}"
+
+      - name: Package release assets
+        run: |
+          set -euo pipefail
+          ARGS=(
+            scripts/eth3/package_vectors_release.sh
+            --version "${{ github.event.inputs.release_version }}"
+            --vectors-dir lean-spec-vectors
+            --out-dir dist
+            --leanspec-env-file .tmp/leanspec.env
+            --fork "${{ github.event.inputs.fork }}"
+            --env-file .tmp/release-assets.env
+          )
+          if [ -n "${{ github.event.inputs.scheme }}" ]; then
+            ARGS+=(--scheme "${{ github.event.inputs.scheme }}")
+          fi
+          "${ARGS[@]}"
+
+      - name: Build release notes
+        run: |
+          set -euo pipefail
+          source .tmp/leanspec.env
+          cat > dist/release-notes.md <<EOF
+          leanSpec vectors release
+
+          - release version: ${{ github.event.inputs.release_version }}
+          - requested leanSpec ref: ${LEANSPEC_REF_REQUESTED}
+          - resolved leanSpec SHA: ${LEANSPEC_SHA}
+          - update main submodule: ${{ github.event.inputs.update_main_submodule }}
+          - fork: ${{ github.event.inputs.fork }}
+          - scheme: ${{ github.event.inputs.scheme }}
+          - workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source .tmp/release-assets.env
+          gh release create "${{ github.event.inputs.release_version }}" \
+            "${VECTOR_TARBALL}" \
+            "${VECTOR_TARBALL_SHA256}" \
+            "${VECTOR_METADATA_ASSET}" \
+            --title "${{ github.event.inputs.release_version }}" \
+            --notes-file dist/release-notes.md
