@@ -7,9 +7,11 @@ set -Eeuo pipefail
 
 if [[ -n "${CONSENSUS_TEST_VECTOR_VERSIONS:-}" ]]; then
   IFS=',' read -r -a VERSIONS <<< "${CONSENSUS_TEST_VECTOR_VERSIONS}"
-elif [[ "$#" -gt 0 ]]; then
-  VERSIONS=("$@")
 else
+  VERSIONS=("$@")
+fi
+
+if [[ "${#VERSIONS[@]}" -eq 0 ]]; then
   echo "Set CONSENSUS_TEST_VECTOR_VERSIONS or pass at least one version (for example: v1.0.0)." >&2
   exit 1
 fi
@@ -25,60 +27,35 @@ else
   exit 1
 fi
 
-REL_PATH="$(dirname -- "${BASH_SOURCE[0]}")"
-ABS_PATH="$(cd "${REL_PATH}" && pwd)"
+trap 'echo; echo "Interrupted."; exit 1' SIGINT SIGTERM
 
-cleanup() {
-  echo
-  echo "Interrupted. Cleaning partial downloads."
-  cd "${ABS_PATH}"
-  rm -rf tarballs/.partial-download
-  exit 1
-}
-trap cleanup SIGINT SIGTERM
+EXTRA_TAR=()
+if tar --version 2>/dev/null | grep -qi 'gnu'; then
+  EXTRA_TAR=(--warning=no-unknown-keyword --ignore-zeros)
+fi
 
-download_release() {
-  local version="$1"
-  local tarball_name="eth3-lean-spec-vectors-${version}.tar.gz"
-  local checksum_name="${tarball_name}.sha256"
-  local release_base="https://github.com/${VECTOR_RELEASE_REPO}/releases/download/${version}"
-  local target_dir="tarballs/${version}"
+for version in "${VERSIONS[@]}"; do
+  tarball_name="eth3-lean-spec-vectors-${version}.tar.gz"
+  checksum_name="${tarball_name}.sha256"
+  release_base="https://github.com/${VECTOR_RELEASE_REPO}/releases/download/${version}"
+  target_dir="tarballs/${version}"
+  out_dir="tests-${version}"
 
   mkdir -p "${target_dir}"
-  pushd "${target_dir}" >/dev/null
 
   curl --fail --location --show-error --retry 3 --retry-all-errors \
-    --output "${tarball_name}" \
+    --output "${target_dir}/${tarball_name}" \
     "${release_base}/${tarball_name}"
 
   curl --fail --location --show-error --retry 3 --retry-all-errors \
-    --output "${checksum_name}" \
+    --output "${target_dir}/${checksum_name}" \
     "${release_base}/${checksum_name}"
 
-  "${CHECKSUM_BIN[@]}" -c "${checksum_name}"
-
-  popd >/dev/null
-}
-
-unpack_release() {
-  local version="$1"
-  local tarball_name="eth3-lean-spec-vectors-${version}.tar.gz"
-  local tarball_path="tarballs/${version}/${tarball_name}"
-  local out_dir="tests-${version}"
-  local extra_tar=()
-
-  if tar --version 2>/dev/null | grep -qi 'gnu'; then
-    extra_tar+=(--warning=no-unknown-keyword --ignore-zeros)
-  fi
+  (cd "${target_dir}" && "${CHECKSUM_BIN[@]}" -c "${checksum_name}")
 
   rm -rf "${out_dir}"
   mkdir -p "${out_dir}"
-  tar -C "${out_dir}" --strip-components 1 "${extra_tar[@]}" -xzf "${tarball_path}"
-}
-
-for version in "${VERSIONS[@]}"; do
-  download_release "${version}"
-  unpack_release "${version}"
+  tar -C "${out_dir}" --strip-components 1 "${EXTRA_TAR[@]}" -xzf "${target_dir}/${tarball_name}"
 done
 
 shopt -s nullglob

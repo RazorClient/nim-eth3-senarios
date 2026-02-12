@@ -7,7 +7,6 @@ OUT_DIR="${ROOT_DIR}/lean-spec-vectors"
 FORK="Devnet"
 SCHEME=""
 PYTHON_VERSION="3.12"
-CLEAN=1
 
 bootstrap_uv() {
   if command -v uv >/dev/null 2>&1; then
@@ -51,10 +50,6 @@ while [[ $# -gt 0 ]]; do
       PYTHON_VERSION="$2"
       shift 2
       ;;
-    --no-clean)
-      CLEAN=0
-      shift
-      ;;
     *)
       echo "Unknown option: $1" >&2
       exit 1
@@ -88,9 +83,7 @@ fi
 
 bootstrap_uv
 
-if [[ "${CLEAN}" -eq 1 ]]; then
-  rm -rf "${OUT_DIR}"
-fi
+rm -rf "${OUT_DIR}"
 mkdir -p "${OUT_DIR}"
 
 OUT_DIR_ABS="$(cd -- "$(dirname -- "${OUT_DIR}")" && pwd)/$(basename -- "${OUT_DIR}")"

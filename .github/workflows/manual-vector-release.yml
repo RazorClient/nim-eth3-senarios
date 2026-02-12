@@ -77,35 +77,23 @@ jobs:
 
       - name: Generate vectors
         run: |
-          set -euo pipefail
-          ARGS=(
-            scripts/eth3/generate_lean_spec_vectors.sh
-            --repo-dir vendor/leanspec
-            --out-dir lean-spec-vectors
-            --fork "${{ github.event.inputs.fork }}"
+          scripts/eth3/generate_lean_spec_vectors.sh \
+            --repo-dir vendor/leanspec \
+            --out-dir lean-spec-vectors \
+            --fork "${{ github.event.inputs.fork }}" \
+            --scheme "${{ github.event.inputs.scheme }}" \
             --python-version 3.12
-          )
-          if [ -n "${{ github.event.inputs.scheme }}" ]; then
-            ARGS+=(--scheme "${{ github.event.inputs.scheme }}")
-          fi
-          "${ARGS[@]}"
 
       - name: Package release assets
         run: |
-          set -euo pipefail
-          ARGS=(
-            scripts/eth3/package_vectors_release.sh
-            --version "${{ github.event.inputs.release_version }}"
-            --vectors-dir lean-spec-vectors
-            --out-dir dist
-            --leanspec-env-file .tmp/leanspec.env
-            --fork "${{ github.event.inputs.fork }}"
+          scripts/eth3/package_vectors_release.sh \
+            --version "${{ github.event.inputs.release_version }}" \
+            --vectors-dir lean-spec-vectors \
+            --out-dir dist \
+            --leanspec-env-file .tmp/leanspec.env \
+            --fork "${{ github.event.inputs.fork }}" \
+            --scheme "${{ github.event.inputs.scheme }}" \
             --env-file .tmp/release-assets.env
-          )
-          if [ -n "${{ github.event.inputs.scheme }}" ]; then
-            ARGS+=(--scheme "${{ github.event.inputs.scheme }}")
-          fi
-          "${ARGS[@]}"
 
       - name: Build release notes
         run: |

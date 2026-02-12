@@ -75,13 +75,8 @@ if ! [[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
   exit 1
 fi
 
-if [[ ! -d "${VECTORS_DIR}" ]]; then
-  echo "Vectors directory not found: ${VECTORS_DIR}" >&2
-  exit 1
-fi
-
-if [[ -z "$(find "${VECTORS_DIR}" -type f -print -quit)" ]]; then
-  echo "Vectors directory is empty: ${VECTORS_DIR}" >&2
+if [[ ! -d "${VECTORS_DIR}" ]] || [[ -z "$(find "${VECTORS_DIR}" -type f -print -quit)" ]]; then
+  echo "Vectors directory missing or empty: ${VECTORS_DIR}" >&2
   exit 1
 fi
 
@@ -90,32 +85,17 @@ if [[ "${OUT_DIR}" == "/" || -z "${OUT_DIR}" ]]; then
   exit 1
 fi
 
-LEANSPEC_REF_REQUESTED="unknown"
-LEANSPEC_SHA=""
-LEANSPEC_SHORT_SHA=""
-LEANSPEC_REMOTE=""
-LEANSPEC_COMMIT_DATE_UTC=""
 if [[ -f "${LEANSPEC_ENV_FILE}" ]]; then
   # shellcheck disable=SC1090
   source "${LEANSPEC_ENV_FILE}"
 fi
+LEANSPEC_REF_REQUESTED="${LEANSPEC_REF_REQUESTED:-unknown}"
+LEANSPEC_SHA="${LEANSPEC_SHA:-}"
+LEANSPEC_SHORT_SHA="${LEANSPEC_SHORT_SHA:-${LEANSPEC_SHA:0:12}}"
+LEANSPEC_REMOTE="${LEANSPEC_REMOTE:-}"
+LEANSPEC_COMMIT_DATE_UTC="${LEANSPEC_COMMIT_DATE_UTC:-}"
 
-if [[ -z "${LEANSPEC_SHA}" && -e "${ROOT_DIR}/vendor/leanspec/.git" ]]; then
-  LEANSPEC_SHA="$(git -C "${ROOT_DIR}/vendor/leanspec" rev-parse HEAD)"
-fi
-if [[ -z "${LEANSPEC_SHORT_SHA}" && -n "${LEANSPEC_SHA}" ]]; then
-  LEANSPEC_SHORT_SHA="$(printf '%s' "${LEANSPEC_SHA}" | cut -c1-12)"
-fi
-if [[ -z "${LEANSPEC_REMOTE}" && -e "${ROOT_DIR}/vendor/leanspec/.git" ]]; then
-  LEANSPEC_REMOTE="$(git -C "${ROOT_DIR}/vendor/leanspec" remote get-url origin)"
-fi
-if [[ -z "${LEANSPEC_COMMIT_DATE_UTC}" && -n "${LEANSPEC_SHA}" ]]; then
-  LEANSPEC_COMMIT_DATE_UTC="$(git -C "${ROOT_DIR}/vendor/leanspec" show -s --format=%cI "${LEANSPEC_SHA}")"
-fi
-
-if ! GENERATOR_REPO_SHA="$(git -C "${ROOT_DIR}" rev-parse --verify HEAD 2>/dev/null)"; then
-  GENERATOR_REPO_SHA="unknown"
-fi
+GENERATOR_REPO_SHA="$(git -C "${ROOT_DIR}" rev-parse --verify HEAD 2>/dev/null || echo unknown)"
 GENERATOR_REPO_REMOTE="$(git -C "${ROOT_DIR}" remote get-url origin 2>/dev/null || true)"
 GENERATED_AT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -124,20 +104,17 @@ STAGING_PARENT="${OUT_DIR}/.staging"
 STAGING_DIR="${STAGING_PARENT}/${ARCHIVE_STEM}"
 METADATA_DIR="${STAGING_DIR}/metadata"
 METADATA_JSON="${METADATA_DIR}/leanspec.json"
-MANIFEST_FILE="${METADATA_DIR}/MANIFEST.sha256"
-MANIFEST_FILENAME="$(basename -- "${MANIFEST_FILE}")"
+MANIFEST_FILENAME="MANIFEST.sha256"
 TARBALL_PATH="${OUT_DIR}/${ARCHIVE_STEM}.tar.gz"
 TARBALL_SHA256_PATH="${TARBALL_PATH}.sha256"
 METADATA_ASSET_PATH="${OUT_DIR}/metadata-leanspec-${VERSION}.json"
 
 rm -rf "${STAGING_DIR}"
-mkdir -p "${METADATA_DIR}"
-mkdir -p "${OUT_DIR}"
+mkdir -p "${METADATA_DIR}" "${OUT_DIR}"
 
 cp -a "${VECTORS_DIR}" "${STAGING_DIR}/lean-spec-vectors"
 
-{
-  cat <<EOF
+cat > "${METADATA_JSON}" <<EOF
 {
   "version": "$(json_escape "${VERSION}")",
   "leanspecRefRequested": "$(json_escape "${LEANSPEC_REF_REQUESTED}")",
@@ -152,7 +129,6 @@ cp -a "${VECTORS_DIR}" "${STAGING_DIR}/lean-spec-vectors"
   "generatorRepoRemote": "$(json_escape "${GENERATOR_REPO_REMOTE}")"
 }
 EOF
-} > "${METADATA_JSON}"
 
 (
   cd "${STAGING_DIR}"
@@ -179,8 +155,3 @@ if [[ -n "${EXPORT_ENV_FILE}" ]]; then
     printf 'VECTOR_METADATA_ASSET=%q\n' "${METADATA_ASSET_PATH}"
   } > "${EXPORT_ENV_FILE}"
 fi
-
-echo "Packaged vector release assets:"
-echo "  ${TARBALL_PATH}"
-echo "  ${TARBALL_SHA256_PATH}"
-echo "  ${METADATA_ASSET_PATH}"
